@@ -1,0 +1,181 @@
+﻿@page "/"
+@using System.Text
+
+<h1 style="text-align: center;">
+    🌟 回音猜猜乐预测工具——西岸专属 🌟
+</h1>
+
+<div style="max-width: 500px; margin: auto; padding: 30px; background-color: rgba(255,255,255,0.85); border-radius: 12px; box-shadow: 0 0 12px rgba(0,0,0,0.1);">
+    <p>📌 输入历史数字（1-16），用英文逗号或点号隔开：</p>
+    <input type="text" @bind="InputNumbers" placeholder="如：1,6,14.16 或 1.6.14.16" />
+
+    <div style="margin-top: 12px;">
+        <button @onclick="PredictNextNumber">🎯 预测</button>
+        <button @onclick="ClearInput">🧹 清空</button>
+        <button @onclick="ExportPrediction">📋 复制结果</button>
+    </div>
+
+    @if (PredictionResult != null)
+    {
+        <div style="margin-top: 20px;">
+            <p>🔮 推荐数字 TOP3：</p>
+            <ol>
+                @foreach (var kv in FinalScore.OrderByDescending(i => i.Value).Take(3))
+                {
+                    <li><strong>@kv.Key</strong> — @($"{kv.Value:P0}")</li>
+                }
+            </ol>
+
+            <p>📊 综合评分条：</p>
+            @foreach (var item in FinalScore.OrderByDescending(i => i.Value))
+            {
+                <div>
+                    <span style="display:inline-block;width:20px;">@item.Key</span>：
+                    <span style="display:inline-block; background-color: lightgreen; height: 16px; width:@(item.Value * 200)px;"></span>
+                    <span> @($"{item.Value:P0}")</span>
+                </div>
+            }
+
+            <p style="margin-top: 20px;">📉 遗漏值分析（距离上次出现的轮次）：</p>
+            <ul>
+                @foreach (var miss in Omission.OrderByDescending(o => o.Value))
+                {
+                    <li>@miss.Key：<strong>@miss.Value</strong> 期未出</li>
+                }
+            </ul>
+        </div>
+    }
+
+    @if (History.Count > 0)
+    {
+        <div style="margin-top: 30px;">
+            <h4>📁 历史记录：</h4>
+            <ul>
+                @foreach (var h in History)
+                {
+                    <li>@h.Time.ToString("HH:mm:ss") → 输入：[@string.Join(",", h.Input)]，推荐：<strong>@h.Top1</strong></li>
+                }
+            </ul>
+        </div>
+    }
+</div>
+
+@code {
+    private string InputNumbers { get; set; } = "";
+    private int? PredictionResult;
+    private Dictionary<int, double> FinalScore = new();
+    private Dictionary<int, int> Omission = new();
+    private List<PredictionHistory> History = new();
+
+    private class PredictionHistory
+    {
+        public List<int> Input { get; set; } = new();
+        public int Top1 { get; set; }
+        public DateTime Time { get; set; } = DateTime.Now;
+    }
+
+    private void ClearInput()
+    {
+        InputNumbers = "";
+        PredictionResult = null;
+        FinalScore.Clear();
+        Omission.Clear();
+    }
+
+    private async Task ExportPrediction()
+    {
+        var top3 = FinalScore.OrderByDescending(kv => kv.Value).Take(3).Select(kv => kv.Key);
+        var text = $"我刚用『回音猜猜乐助手』预测：推荐数字TOP3：{string.Join(", ", top3)}，你觉得哪个最准？";
+        await JS.InvokeVoidAsync("navigator.clipboard.writeText", text);
+    }
+
+    [Inject] private IJSRuntime JS { get; set; }
+
+    private void PredictNextNumber()
+    {
+        var numbers = InputNumbers
+            .Replace(".", ",")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(n => int.TryParse(n.Trim(), out var x) ? x : -1)
+            .Where(n => n >= 1 && n <= 16)
+            .ToList();
+
+        PredictionResult = null;
+        FinalScore.Clear();
+        Omission.Clear();
+
+        if (numbers.Count < 2) return;
+
+        var allNumbers = Enumerable.Range(1, 16).ToList();
+
+        // 马尔可夫链
+        var markov = new Dictionary<int, List<int>>();
+        for (int i = 0; i < numbers.Count - 1; i++)
+        {
+            if (!markov.ContainsKey(numbers[i]))
+                markov[numbers[i]] = new List<int>();
+            markov[numbers[i]].Add(numbers[i + 1]);
+        }
+
+        var markovScore = new Dictionary<int, double>();
+        if (markov.ContainsKey(numbers.Last()))
+        {
+            var nextList = markov[numbers.Last()];
+            var total = nextList.Count;
+            foreach (var g in nextList.GroupBy(x => x))
+            {
+                markovScore[g.Key] = (double)g.Count() / total;
+            }
+        }
+
+        // 频率模型
+        var freq = new Dictionary<int, double>();
+        foreach (var n in allNumbers)
+        {
+            freq[n] = numbers.Count(x => x == n) / (double)numbers.Count;
+        }
+
+        // 热冷号
+        var hotcold = new Dictionary<int, double>();
+        var lastSeen = new Dictionary<int, int>();
+        for (int i = numbers.Count - 1; i >= 0; i--)
+        {
+            if (!lastSeen.ContainsKey(numbers[i]))
+                lastSeen[numbers[i]] = numbers.Count - i;
+        }
+
+        foreach (var n in allNumbers)
+        {
+            hotcold[n] = lastSeen.ContainsKey(n)
+                ? Math.Min(1, lastSeen[n] / 10.0)
+                : 1.0;
+        }
+
+        // 多模型融合
+        foreach (var n in allNumbers)
+        {
+            var m = markovScore.ContainsKey(n) ? markovScore[n] : 0;
+            var f = freq[n];
+            var h = hotcold[n];
+
+            FinalScore[n] = m * 0.4 + (1 - f) * 0.3 + h * 0.3;
+        }
+
+        PredictionResult = FinalScore.OrderByDescending(kv => kv.Value).First().Key;
+
+        // 遗漏值分析
+        foreach (var n in allNumbers)
+        {
+            var reverseIndex = numbers.FindLastIndex(x => x == n);
+            Omission[n] = reverseIndex == -1 ? numbers.Count : numbers.Count - reverseIndex - 1;
+        }
+
+        // 历史记录
+        History.Insert(0, new PredictionHistory
+        {
+            Input = numbers,
+            Top1 = PredictionResult.Value
+        });
+        if (History.Count > 10) History.RemoveAt(10);
+    }
+}
