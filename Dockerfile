@@ -1,22 +1,19 @@
-ï»¿# ä½¿ç”¨å®˜æ–¹ ASP.NET Core è¿è¡Œæ—¶ä½œä¸ºåŸºç¡€é•œåƒ
+# Ê¹ÓÃ .NET 8 µÄÔËĞĞÊ±¾µÏñ
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS base
 WORKDIR /app
 EXPOSE 80
 
-# ä½¿ç”¨å®˜æ–¹ .NET SDK ä½œä¸ºæ„å»ºç¯å¢ƒ
+# Ê¹ÓÃ SDK ¾µÏñ¹¹½¨Ó¦ÓÃ
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
-
-# å¤åˆ¶é¡¹ç›®æ–‡ä»¶
 COPY ["GuessBoxHelper/GuessBoxHelper.csproj", "GuessBoxHelper/"]
 RUN dotnet restore "GuessBoxHelper/GuessBoxHelper.csproj"
 
-# å¤åˆ¶å…¨éƒ¨å†…å®¹å¹¶æ„å»º
 COPY . .
 WORKDIR "/src/GuessBoxHelper"
 RUN dotnet publish "GuessBoxHelper.csproj" -c Release -o /app/publish
 
-# å‘å¸ƒé˜¶æ®µ
+# ×îÖÕÔËĞĞ½×¶Î
 FROM base AS final
 WORKDIR /app
 COPY --from=build /app/publish .
